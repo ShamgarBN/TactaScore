@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tacta Score</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tacta Score">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root { --bg: #111; --fg: #f2f2f2; --muted: #9a9a9a; --line: #2c2c2c; --accent: #f2f2f2; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 8px 0 20px; letter-spacing: 0.02em; }
+  button, .btn {
+    display: block; width: 100%; padding: 16px; border-radius: 12px; border: 1px solid var(--line);
+    background: #1c1c1c; color: var(--fg); font: inherit; font-weight: 600; text-align: center; cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+  button.danger { color: #ff6b5e; }
+  button.link { background: none; border: none; color: var(--muted); font-weight: 400; padding: 12px; }
+  input[type=file] { display: none; }
+  #status { color: var(--muted); text-align: center; margin: 16px 0; min-height: 1.4em; }
+  #scores { list-style: none; padding: 0; margin: 8px 0 20px; }
+  #scores li {
+    display: flex; align-items: center; gap: 14px; padding: 14px 4px; border-bottom: 1px solid var(--line);
+    font-size: 22px;
+  }
+  #scores .sw { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+  #scores .name { flex: 1; }
+  #scores .pts { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #scores li.win .name::after { content: "  ★"; color: #f2c94c; }
+  #overlay { width: 100%; border-radius: 8px; margin-top: 8px; display: none; }
+  .row { display: grid; gap: 10px; margin-top: 10px; }
+  .hidden { display: none !important; }
+  dialog { border: 1px solid var(--line); border-radius: 14px; background: #1c1c1c; color: var(--fg); padding: 20px; width: min(340px, 90vw); }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  dialog p { margin: 0 0 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tacta Score</h1>
+
+  <label class="btn primary" id="snapBtn">
+    Take photo of the table
+    <input type="file" id="photo" accept="image/*" capture="environment">
+  </label>
+
+  <div id="status"></div>
+
+  <section id="results" class="hidden">
+    <ul id="scores"></ul>
+    <button class="link" id="toggleDots">Show counted dots</button>
+    <canvas id="overlay"></canvas>
+    <div class="row">
+      <button class="danger" id="clearBtn">Clear game</button>
+    </div>
+  </section>
+</main>
+
+<dialog id="confirmClear">
+  <p>Clear this game's photo and scores?</p>
+  <div class="row">
+    <button class="danger" id="confirmYes">Yes, clear</button>
+    <button id="confirmNo">Cancel</button>
+  </div>
+</dialog>
+
+<script type="module">
+import { detect, COLORS } from './src/detect.js';
+
+const $ = (id) => document.getElementById(id);
+const state = { bitmap: null, result: null };
+
+$('photo').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  clearGame();
+  $('status').textContent = 'Counting dots…';
+  await new Promise((r) => setTimeout(r, 30)); // let the status paint
+  try {
+    const bitmap = await createImageBitmap(file); // applies EXIF orientation
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    canvas.width = canvas.height = 0; // release the full-size buffer
+    state.bitmap = bitmap;
+    state.result = detect(img);
+    showScores(state.result.scores);
+    $('status').textContent = `${state.result.dots.length} dots counted`;
+  } catch (err) {
+    $('status').textContent = `Couldn't read that photo: ${err.message}`;
+  }
+});
+
+function showScores(scores) {
+  const rows = Object.entries(scores).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const top = rows.length ? rows[0][1] : 0;
+  $('scores').innerHTML = rows.length
+    ? rows.map(([k, n]) => `<li class="${n === top ? 'win' : ''}"><span class="sw" style="background:${COLORS[k].css}"></span><span class="name">${COLORS[k].label}</span><span class="pts">${n}</span></li>`).join('')
+    : '<li>No dots found. Try again from directly above, with all cards in frame.</li>';
+  $('results').classList.remove('hidden');
+}
+
+$('toggleDots').addEventListener('click', () => {
+  const cv = $('overlay');
+  if (cv.style.display === 'block') { cv.style.display = 'none'; $('toggleDots').textContent = 'Show counted dots'; return; }
+  const { bitmap, result } = state;
+  if (!bitmap) return;
+  const s = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  cv.width = Math.round(bitmap.width * s); cv.height = Math.round(bitmap.height * s);
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, cv.width, cv.height);
+  ctx.lineWidth = 3;
+  for (const d of result.dots) {
+    ctx.strokeStyle = COLORS[d.color].css;
+    ctx.beginPath(); ctx.arc(d.x * s, d.y * s, Math.max(5, d.r * s * 2), 0, Math.PI * 2); ctx.stroke();
+  }
+  cv.style.display = 'block'; $('toggleDots').textContent = 'Hide counted dots';
+});
+
+function clearGame() {
+  state.bitmap?.close?.();
+  state.bitmap = null; state.result = null;
+  const cv = $('overlay'); cv.width = cv.height = 0; cv.style.display = 'none';
+  $('toggleDots').textContent = 'Show counted dots';
+  $('scores').innerHTML = '';
+  $('results').classList.add('hidden');
+  $('status').textContent = '';
+}
+
+$('clearBtn').addEventListener('click', () => $('confirmClear').showModal());
+$('confirmNo').addEventListener('click', () => $('confirmClear').close());
+$('confirmYes').addEventListener('click', () => {
+  clearGame();
+  $('photo').value = '';
+  $('confirmClear').close();
+  $('status').textContent = 'Cleared.';
+});
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# Game photos stay local (they show people at the table)
+samples/
+*.bmp
+*.heic
+*.HEIC
+.claude/
+.DS_Store
