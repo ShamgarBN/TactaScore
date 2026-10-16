@@ -32,7 +32,8 @@ const DEFAULTS = {
   colorMinS: 0.2,      // ring pixel must be this saturated to count as card color
   colorMinSCool: 0.1,  // ...or this, for blue/purple hues
   colorMinV: 0.40,     // ...and this bright (rejects dark wood)
-  ringMinColorFrac: 0.6,
+  ringMinColorFrac: 0.8,
+  ringMaxVSpread: 0.2, // max brightness variation of the ring (relative); real card color is flat
   ringMinAgree: 0.75,  // share of colored ring pixels that agree on one color
   sizeTolerance: [0.55, 1.8], // dot radius relative to median
   maxSide: 4096,       // downscale larger images to this long side
@@ -119,7 +120,7 @@ function sampleRing(img, b, o) {
   const { width: w, height: h, data } = img;
   const r = Math.sqrt(b.area / Math.PI);
   let n = 0, colored = 0, cx = 0, cy = 0, sumS = 0, sumV = 0;
-  const hues = [];
+  const hues = [], cvs = [];
   for (const k of [1.7, 2.1, 2.5]) {
     const rr = r * k + 1;
     for (let a = 0; a < 40; a++) {
@@ -134,14 +135,17 @@ function sampleRing(img, b, o) {
       // warm light and must not count.
       const minS = hh >= 200 && hh <= 300 ? o.colorMinSCool : o.colorMinS;
       if (s >= minS && v >= o.colorMinV) {
-        colored++; hues.push(hh); sumS += s; sumV += v;
+        colored++; hues.push(hh); cvs.push(v); sumS += s; sumV += v;
         cx += Math.cos((hh * Math.PI) / 180); cy += Math.sin((hh * Math.PI) / 180);
       }
     }
   }
   if (!colored) return { frac: 0, hues };
   const hue = ((Math.atan2(cy, cx) * 180) / Math.PI + 360) % 360;
-  return { frac: colored / n, hue, hues, s: sumS / colored, v: sumV / colored, r };
+  // Printed card color is flat; a speckled surface (granite, wood grain) is not.
+  const meanV = sumV / colored;
+  const vSpread = Math.sqrt(cvs.reduce((a, v) => a + (v - meanV) ** 2, 0) / colored) / meanV;
+  return { frac: colored / n, hue, hues, s: sumS / colored, v: meanV, vSpread, r };
 }
 
 function nearestColor(hue, centers) {
@@ -200,6 +204,7 @@ export function detect(input, opts = {}) {
     if (coreFill(mask, w, b) < o.minCoreFill) { rejected.push({ ...b, why: 'core' }); continue; }
     const ring = sampleRing(img, b, o);
     if (ring.frac < o.ringMinColorFrac) { rejected.push({ ...b, why: 'ring' }); continue; }
+    if (ring.vSpread > o.ringMaxVSpread) { rejected.push({ ...b, why: 'speckle' }); continue; }
     const agree = ring.hues.filter((hh) => hueDist(hh, ring.hue) < 25).length / ring.hues.length;
     if (agree < o.ringMinAgree) { rejected.push({ ...b, why: 'mixed' }); continue; }
     cands.push({ ...b, ...ring, hues: undefined });

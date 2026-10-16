@@ -26,7 +26,7 @@ if (outPath) {
       }
     }
   };
-  const rejColor = { ring: [90, 90, 90], mixed: [0, 255, 255], size: [255, 255, 0], shape: [60, 60, 60], area: [255, 0, 255], core: [255, 120, 0] };
+  const rejColor = { ring: [90, 90, 90], mixed: [0, 255, 255], size: [255, 255, 0], shape: [60, 60, 60], area: [255, 0, 255], core: [255, 120, 0], speckle: [0, 200, 0] };
   for (const r of res.rejected) if (r.why !== 'shape') ring(r.x, r.y, r.r * 1.6, rejColor[r.why], 5);
   for (const d of res.dots) {
     ring(d.x, d.y, d.r * 2.0, [255, 255, 255], 3);
