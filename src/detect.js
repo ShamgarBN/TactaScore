@@ -23,7 +23,7 @@ const DEFAULTS = {
   localWindow: 0.02,   // half-width of the local-brightness box, as share of long side
   localContrast: 35,   // dot must beat the local mean (darkest channel) by this much
   whiteMaxS: 0.24,     // max saturation for a dot pixel
-  minArea: 8,          // px, at working resolution
+  minArea: 28,         // px, at working resolution (r ~3); smaller is noise
   maxArea: 8000,
   minFill: 0.66,       // blob area / bbox area (circle ~0.785)
   maxFill: 0.95,
@@ -207,13 +207,20 @@ export function detect(input, opts = {}) {
     if (ring.vSpread > o.ringMaxVSpread) { rejected.push({ ...b, why: 'speckle' }); continue; }
     const agree = ring.hues.filter((hh) => hueDist(hh, ring.hue) < 25).length / ring.hues.length;
     if (agree < o.ringMinAgree) { rejected.push({ ...b, why: 'mixed' }); continue; }
-    cands.push({ ...b, ...ring, hues: undefined });
+    const ci = (Math.round(b.y) * w + Math.round(b.x)) * 4;
+    const dotV = Math.max(data[ci], data[ci + 1], data[ci + 2]) / 255;
+    cands.push({ ...b, ...ring, hues: undefined, dotV });
   }
 
-  // Size consistency: all scoring dots are printed the same size.
+  // Size consistency: all scoring dots are printed the same size. Pick the
+  // reference size by vote, weighting each vote by radius: background specks
+  // (granite, crumbs) can outnumber real dots but are always much smaller.
   if (cands.length) {
-    const rs = cands.map((c) => c.r).sort((a, b) => a - b);
-    const med = rs[Math.floor(rs.length / 2)];
+    let med = 0, best = -1;
+    for (const c of cands) {
+      const votes = cands.filter((d) => d.r >= c.r * 0.75 && d.r <= c.r * 1.33).length * c.r;
+      if (votes > best) { best = votes; med = c.r; }
+    }
     const [lo, hi] = o.sizeTolerance;
     cands = cands.filter((c) => {
       const ok = c.r >= med * lo && c.r <= med * hi;
